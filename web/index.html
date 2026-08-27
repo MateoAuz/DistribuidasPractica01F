@@ -31,6 +31,35 @@
 
   <title>app_01</title>
   <link rel="manifest" href="manifest.json">
+
+  <script>
+    // Prueba de estrés / teclas al azar:
+    // Bloquea atajos nativos del navegador que abren diálogos o cambian de
+    // vista (F7 = navegación por cursor, F11 = pantalla completa,
+    // F1 = ayuda, F3/Ctrl+F = buscar, Escape, etc.) para que la app
+    // permanezca estática ante teclas presionadas al azar.
+    // Se deja pasar SOLO la tecla de recargar (F5 o Ctrl+R).
+    (function () {
+      var blocked = new Set([
+        'F1', 'F2', 'F3', 'F4', 'F6', 'F7', 'F8', 'F9', 'F10', 'F11', 'F12',
+        'Escape'
+      ]);
+
+      window.addEventListener('keydown', function (event) {
+        var isReload = event.key === 'F5' ||
+          ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'r');
+
+        if (isReload) {
+          return; // se permite recargar la página normalmente
+        }
+
+        if (blocked.has(event.key)) {
+          event.preventDefault();
+          event.stopPropagation();
+        }
+      }, true);
+    })();
+  </script>
 </head>
 <body>
   <!--

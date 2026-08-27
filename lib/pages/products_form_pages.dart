@@ -1,89 +1,419 @@
-
 import 'package:app_01/models/products.dart';
 import 'package:app_01/services/products_service.dart';
 import 'package:flutter/material.dart';
-
+import 'package:flutter/services.dart';
 
 class ProductFormPage extends StatefulWidget {
-    final  Products? product;
-   const ProductFormPage({super.key, this.product});
-   @override
-   State<ProductFormPage> createState() => _ProductFormPageState();
- }
- 
- class _ProductFormPageState extends State<ProductFormPage> {
+  final Products? product;
+  const ProductFormPage({super.key, this.product});
+
+  @override
+  State<ProductFormPage> createState() => _ProductFormPageState();
+}
+
+/// Formateador de precio: solo dígitos y UNA coma decimal.
+/// Máximo 4 dígitos enteros + 2 decimales (6 dígitos en total).
+/// Una vez alcanzado el límite, bloquea físicamente que se siga escribiendo.
+class _PriceInputFormatter extends TextInputFormatter {
+  @override
+  TextEditingValue formatEditUpdate(
+    TextEditingValue oldValue,
+    TextEditingValue newValue,
+  ) {
+    var text = newValue.text;
+
+    // Solo se permiten dígitos y comas.
+    text = text.replaceAll(RegExp(r'[^0-9,]'), '');
+
+    // Como máximo UNA coma: se elimina cualquier coma adicional.
+    final firstComma = text.indexOf(',');
+    if (firstComma != -1) {
+      text = text.substring(0, firstComma + 1) +
+          text.substring(firstComma + 1).replaceAll(',', '');
+    }
+
+    final parts = text.split(',');
+    var integerPart = parts[0];
+    String? decimalPart = parts.length > 1 ? parts[1] : null;
+
+    // Máximo 4 dígitos enteros antes de la coma.
+    if (integerPart.length > 4) {
+      integerPart = integerPart.substring(0, 4);
+    }
+
+    // Máximo 2 dígitos decimales después de la coma.
+    if (decimalPart != null && decimalPart.length > 2) {
+      decimalPart = decimalPart.substring(0, 2);
+    }
+
+    final result =
+        decimalPart != null ? '$integerPart,$decimalPart' : integerPart;
+
+    return TextEditingValue(
+      text: result,
+      selection: TextSelection.collapsed(offset: result.length),
+    );
+  }
+}
+
+/// Teclas que se bloquean dentro de los campos del formulario:
+/// Tab, Caps Lock, Shift, Ctrl, Fn, Windows/Meta y Alt.
+/// Se consume el evento (KeyEventResult.handled) para que no dispare
+/// su acción por defecto (Tab ya no cambia el foco de campo, por ejemplo).
+///
+/// NOTA: esto bloquea lo que Flutter es capaz de interceptar a nivel de
+/// aplicación mientras el campo tiene el foco. La tecla Windows/Meta y
+/// combinaciones como Alt+Tab son capturadas por el sistema operativo
+/// ANTES de llegar a cualquier app (web o de escritorio), así que ningún
+/// software de aplicación puede impedir su acción a ese nivel.
+final Set<LogicalKeyboardKey> _blockedKeys = {
+  LogicalKeyboardKey.tab,
+  LogicalKeyboardKey.capsLock,
+  LogicalKeyboardKey.shift,
+  LogicalKeyboardKey.shiftLeft,
+  LogicalKeyboardKey.shiftRight,
+  LogicalKeyboardKey.control,
+  LogicalKeyboardKey.controlLeft,
+  LogicalKeyboardKey.controlRight,
+  LogicalKeyboardKey.alt,
+  LogicalKeyboardKey.altLeft,
+  LogicalKeyboardKey.altRight,
+  LogicalKeyboardKey.meta,
+  LogicalKeyboardKey.metaLeft,
+  LogicalKeyboardKey.metaRight,
+  LogicalKeyboardKey.fn,
+};
+
+KeyEventResult _blockRestrictedKeys(FocusNode node, KeyEvent event) {
+  if (_blockedKeys.contains(event.logicalKey)) {
+    return KeyEventResult.handled;
+  }
+  return KeyEventResult.ignored;
+}
+
+class _ProductFormPageState extends State<ProductFormPage> {
+  final _formKey = GlobalKey<FormState>();
+
   final namesController = TextEditingController();
   final priceController = TextEditingController();
   final stockController = TextEditingController();
 
   final ProductsService productsService = ProductsService();
 
+  bool _isSaving = false;
+
+  // Se marca en true en cuanto el usuario modifica algún campo, para poder
+  // preguntar antes de salir sin guardar.
+  bool _dirty = false;
+
+  // Versión "viva" del producto que se está editando. Empieza con la del
+  // widget, pero se actualiza cuando se resuelve un conflicto cargando los
+  // datos actuales del servidor: de lo contrario, tras un conflicto la
+  // siguiente actualización siempre volvería a chocar (quedaría comparando
+  // contra una versión vieja para siempre).
+  late int _currentVersion;
+
+  // Solo letras (con tildes/ñ) y espacios. Sin números ni caracteres especiales.
+  static final RegExp _nameAllowed = RegExp(r'^[a-zA-ZÀ-ÿ ]+$');
+
   @override
   void initState() {
     super.initState();
+    _currentVersion = widget.product?.version ?? 0;
     if (widget.product != null) {
-      namesController.text = widget.product!.names ?? '';
-      priceController.text = widget.product!.price.toString() ?? '';
-      stockController.text = widget.product!.stock.toString() ?? '';
+      namesController.text = widget.product!.names;
+      priceController.text =
+          widget.product!.price.toStringAsFixed(2).replaceAll('.', ',');
+      stockController.text = widget.product!.stock.toString();
     }
+    namesController.addListener(_markDirty);
+    priceController.addListener(_markDirty);
+    stockController.addListener(_markDirty);
   }
 
-  Future<void> saveUpdateProduct() async {
-    final product = Products(
-      id: widget.product?.id ?? 0.toString(),
-      names: namesController.text,
-      price: double.parse(priceController.text) ?? 0.0,
-      stock: int.parse(stockController.text) ?? 0,
-    );
-
-    if (widget.product != null) {
-      // Update existing product logic here
-      await productsService.updateProduct(product);
-    } else {
-      //Create
-      await productsService.createProduct(product);
-    }
-
-    if (mounted) {
-      Navigator.pop(context);
-    }
+  void _markDirty() {
+    if (!_dirty) setState(() => _dirty = true);
   }
+
   @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title:
-        widget.product != null ? Text('Edit Product') : Text('Add Product'),
-      ),
-      body: Padding(
-        padding: const EdgeInsets.all(20),
-        child: Column(
-          children: [
-            TextField(
-              controller: namesController,
-              decoration: const InputDecoration(labelText: 'Product Name', border: OutlineInputBorder()),
+  void dispose() {
+    namesController.dispose();
+    priceController.dispose();
+    stockController.dispose();
+    super.dispose();
+  }
+
+  /// Pregunta al usuario si desea dejar de editar cuando hay cambios sin
+  /// guardar y presiona "atrás" (gesto, botón del sistema o flecha del
+  /// AppBar). Devuelve true si debe salir de la pantalla.
+  Future<bool> _confirmDiscardIfDirty() async {
+    if (!_dirty) return true;
+
+    final leave = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => PopScope(
+        canPop: false,
+        child: AlertDialog(
+          title: const Text('¿Dejar de editar?'),
+          content: const Text(
+            'Tiene cambios sin guardar. Si sale ahora, se perderán.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('Seguir editando'),
             ),
-            const SizedBox(height: 15),
-            TextField(
-              controller: priceController,
-              decoration: const InputDecoration(labelText: 'Price', border: OutlineInputBorder()),
-              keyboardType: TextInputType.number,
-            ),
-            const SizedBox(height: 15),
-            TextField(
-              controller: stockController,
-              decoration: const InputDecoration(labelText: 'Stock', border: OutlineInputBorder()),
-              keyboardType: TextInputType.number,
-            ),
-            const SizedBox(height: 25),
-            ElevatedButton(
-              onPressed: saveUpdateProduct,
-              child: widget.product != null ? Text('Update') : Text('Save'),
+            FilledButton(
+              style: FilledButton.styleFrom(backgroundColor: Colors.red),
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('Descartar cambios'),
             ),
           ],
         ),
       ),
     );
+
+    return leave ?? false;
   }
-  
+
+  String? _validateName(String? value) {
+    if (value == null || value.trim().isEmpty) {
+      return 'El nombre es obligatorio.';
+    }
+    if (value.trim().length > 55) {
+      return 'El nombre no puede superar los 55 caracteres.';
+    }
+    if (!_nameAllowed.hasMatch(value.trim())) {
+      return 'Solo se permiten letras y espacios (sin números ni caracteres especiales).';
+    }
+    return null;
+  }
+
+  String? _validatePrice(String? value) {
+    if (value == null || value.trim().isEmpty) {
+      return 'El precio es obligatorio.';
+    }
+    final normalized = value.trim().replaceAll(',', '.');
+    final parsed = double.tryParse(normalized);
+    if (parsed == null) {
+      return 'Ingrese un número válido.';
+    }
+    if (parsed <= 0) {
+      return 'El precio debe ser mayor a 0.';
+    }
+    if (parsed > 9999.99) {
+      return 'Máximo 4 enteros y 2 decimales (hasta 9999,99).';
+    }
+    return null;
+  }
+
+  String? _validateStock(String? value) {
+    if (value == null || value.trim().isEmpty) {
+      return 'El stock es obligatorio.';
+    }
+    final parsed = int.tryParse(value.trim());
+    if (parsed == null) {
+      return 'Ingrese un número entero válido.';
+    }
+    // El stock nunca puede ser 0 (ni negativo).
+    if (parsed <= 0) {
+      return 'El stock debe ser mayor a 0 (no puede ser 0).';
+    }
+    if (parsed > 99999) {
+      return 'El stock no puede tener más de 5 dígitos.';
+    }
+    return null;
+  }
+
+  void _showMessage(String message, {bool isError = false}) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        backgroundColor: isError ? Colors.red : Colors.green,
+      ),
+    );
+  }
+
+  Future<void> _handleConflict(ConflictException e) async {
+    if (!mounted) return;
+    final refresh = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false, // no se cierra tocando afuera
+      builder: (context) => PopScope(
+        canPop: false, // bloquea Escape / botón de retroceso
+        child: AlertDialog(
+          title: const Text('Conflicto de datos'),
+          content: Text(
+            '${e.message}\n\n'
+            'Otro usuario cambió este producto mientras usted lo editaba.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('Cerrar'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('Cargar datos actuales'),
+            ),
+          ],
+        ),
+      ),
+    );
+
+    if (refresh == true && e.current != null && mounted) {
+      setState(() {
+        namesController.text = e.current!.names;
+        priceController.text =
+            e.current!.price.toStringAsFixed(2).replaceAll('.', ',');
+        stockController.text = e.current!.stock.toString();
+        // Clave del fix: se toma la versión ACTUAL del servidor, si no la
+        // próxima actualización seguiría comparando contra la versión vieja
+        // y volvería a chocar aunque los datos ya estén al día.
+        _currentVersion = e.current!.version;
+        // Los campos ahora reflejan exactamente lo que hay en el servidor.
+        _dirty = false;
+      });
+    }
+  }
+
+  Future<void> saveUpdateProduct() async {
+    if (!_formKey.currentState!.validate()) {
+      _showMessage('Revise los campos marcados en rojo.', isError: true);
+      return;
+    }
+
+    setState(() => _isSaving = true);
+
+    final product = Products(
+      id: widget.product?.id ?? '0',
+      names: namesController.text.trim(),
+      price: double.parse(priceController.text.trim().replaceAll(',', '.')),
+      stock: int.parse(stockController.text.trim()),
+      version: _currentVersion,
+    );
+
+    try {
+      if (widget.product != null) {
+        final updated = await productsService.updateProduct(product);
+        _currentVersion = updated.version;
+        _showMessage('Producto actualizado correctamente.');
+      } else {
+        await productsService.createProduct(product);
+        _showMessage('Producto creado correctamente.');
+      }
+
+      _dirty = false;
+      if (mounted) {
+        Navigator.pop(context, true);
+      }
+    } on ConflictException catch (e) {
+      await _handleConflict(e);
+    } on ApiException catch (e) {
+      _showMessage(e.message, isError: true);
+    } catch (e) {
+      _showMessage('Ocurrió un error inesperado: $e', isError: true);
+    } finally {
+      if (mounted) setState(() => _isSaving = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final isEditing = widget.product != null;
+
+    return PopScope(
+      // Si no hay cambios sin guardar (o ya se guardó), se puede salir
+      // directamente. Si hay cambios, se intercepta el pop para preguntar.
+      canPop: !_dirty,
+      onPopInvoked: (didPop) async {
+        if (didPop) return;
+        final shouldLeave = await _confirmDiscardIfDirty();
+        if (shouldLeave && context.mounted) {
+          Navigator.pop(context);
+        }
+      },
+      child: Scaffold(
+        appBar: AppBar(
+          title: Text(isEditing ? 'Editar Producto' : 'Agregar Producto'),
+        ),
+        body: Padding(
+          padding: const EdgeInsets.all(20),
+          child: Form(
+            key: _formKey,
+            child: Column(
+              children: [
+                Focus(
+                  onKeyEvent: _blockRestrictedKeys,
+                  child: TextFormField(
+                    controller: namesController,
+                    decoration: const InputDecoration(
+                      labelText: 'Nombre del producto',
+                      border: OutlineInputBorder(),
+                      helperText: 'Solo letras y espacios (máx. 55)',
+                    ),
+                    maxLength: 55,
+                    maxLengthEnforcement: MaxLengthEnforcement.enforced,
+                    // Bloquea físicamente cualquier tecla que no sea letra/espacio,
+                    // incluso si viene de pegar texto. Los números quedan excluidos.
+                    inputFormatters: [
+                      FilteringTextInputFormatter.allow(RegExp(r'[a-zA-ZÀ-ÿ ]')),
+                    ],
+                    validator: _validateName,
+                  ),
+                ),
+                const SizedBox(height: 15),
+                Focus(
+                  onKeyEvent: _blockRestrictedKeys,
+                  child: TextFormField(
+                    controller: priceController,
+                    decoration: const InputDecoration(
+                      labelText: 'Precio',
+                      border: OutlineInputBorder(),
+                      helperText:
+                          'Máx. 4 enteros + 2 decimales, use coma (ej: 199,99)',
+                    ),
+                    keyboardType:
+                        const TextInputType.numberWithOptions(decimal: true),
+                    inputFormatters: [_PriceInputFormatter()],
+                    validator: _validatePrice,
+                  ),
+                ),
+                const SizedBox(height: 15),
+                Focus(
+                  onKeyEvent: _blockRestrictedKeys,
+                  child: TextFormField(
+                    controller: stockController,
+                    decoration: const InputDecoration(
+                      labelText: 'Stock',
+                      border: OutlineInputBorder(),
+                      helperText: 'Solo números, mayor a 0 (máx. 5 dígitos)',
+                    ),
+                    keyboardType: TextInputType.number,
+                    maxLength: 5,
+                    maxLengthEnforcement: MaxLengthEnforcement.enforced,
+                    inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+                    validator: _validateStock,
+                  ),
+                ),
+                const SizedBox(height: 25),
+                ElevatedButton(
+                  onPressed: _isSaving ? null : saveUpdateProduct,
+                  child: _isSaving
+                      ? const SizedBox(
+                          height: 20,
+                          width: 20,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : Text(isEditing ? 'Actualizar' : 'Guardar'),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
 }
