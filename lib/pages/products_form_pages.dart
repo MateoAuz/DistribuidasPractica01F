@@ -28,7 +28,8 @@ class _PriceInputFormatter extends TextInputFormatter {
     // Como máximo UNA coma: se elimina cualquier coma adicional.
     final firstComma = text.indexOf(',');
     if (firstComma != -1) {
-      text = text.substring(0, firstComma + 1) +
+      text =
+          text.substring(0, firstComma + 1) +
           text.substring(firstComma + 1).replaceAll(',', '');
     }
 
@@ -46,12 +47,45 @@ class _PriceInputFormatter extends TextInputFormatter {
       decimalPart = decimalPart.substring(0, 2);
     }
 
-    final result =
-        decimalPart != null ? '$integerPart,$decimalPart' : integerPart;
+    final result = decimalPart != null
+        ? '$integerPart,$decimalPart'
+        : integerPart;
 
     return TextEditingValue(
       text: result,
       selection: TextSelection.collapsed(offset: result.length),
+    );
+  }
+}
+
+class _CapitalizeWordsFormatter extends TextInputFormatter {
+  @override
+  TextEditingValue formatEditUpdate(
+    TextEditingValue oldValue,
+    TextEditingValue newValue,
+  ) {
+    final text = newValue.text;
+    if (text.isEmpty) return newValue;
+
+    final buffer = StringBuffer();
+    bool capitalizeNext = true;
+
+    for (var i = 0; i < text.length; i++) {
+      final char = text[i];
+      if (char == ' ') {
+        buffer.write(char);
+        capitalizeNext = true;
+      } else if (capitalizeNext) {
+        buffer.write(char.toUpperCase());
+        capitalizeNext = false;
+      } else {
+        buffer.write(char.toLowerCase());
+      }
+    }
+
+    return TextEditingValue(
+      text: buffer.toString(),
+      selection: newValue.selection,
     );
   }
 }
@@ -122,8 +156,9 @@ class _ProductFormPageState extends State<ProductFormPage> {
     _currentVersion = widget.product?.version ?? 0;
     if (widget.product != null) {
       namesController.text = widget.product!.names;
-      priceController.text =
-          widget.product!.price.toStringAsFixed(2).replaceAll('.', ',');
+      priceController.text = widget.product!.price
+          .toStringAsFixed(2)
+          .replaceAll('.', ',');
       stockController.text = widget.product!.stock.toString();
     }
     namesController.addListener(_markDirty);
@@ -266,8 +301,9 @@ class _ProductFormPageState extends State<ProductFormPage> {
     if (refresh == true && e.current != null && mounted) {
       setState(() {
         namesController.text = e.current!.names;
-        priceController.text =
-            e.current!.price.toStringAsFixed(2).replaceAll('.', ',');
+        priceController.text = e.current!.price
+            .toStringAsFixed(2)
+            .replaceAll('.', ',');
         stockController.text = e.current!.stock.toString();
         // Clave del fix: se toma la versión ACTUAL del servidor, si no la
         // próxima actualización seguiría comparando contra la versión vieja
@@ -359,7 +395,10 @@ class _ProductFormPageState extends State<ProductFormPage> {
                     // Bloquea físicamente cualquier tecla que no sea letra/espacio,
                     // incluso si viene de pegar texto. Los números quedan excluidos.
                     inputFormatters: [
-                      FilteringTextInputFormatter.allow(RegExp(r'[a-zA-ZÀ-ÿ ]')),
+                      FilteringTextInputFormatter.allow(
+                        RegExp(r'[a-zA-ZÀ-ÿ ]'),
+                      ),
+                      _CapitalizeWordsFormatter(),
                     ],
                     validator: _validateName,
                   ),
@@ -375,8 +414,9 @@ class _ProductFormPageState extends State<ProductFormPage> {
                       helperText:
                           'Máx. 4 enteros + 2 decimales, use coma (ej: 199,99)',
                     ),
-                    keyboardType:
-                        const TextInputType.numberWithOptions(decimal: true),
+                    keyboardType: const TextInputType.numberWithOptions(
+                      decimal: true,
+                    ),
                     inputFormatters: [_PriceInputFormatter()],
                     validator: _validatePrice,
                   ),

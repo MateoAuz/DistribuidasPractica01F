@@ -40,9 +40,9 @@ class _ProductsPageState extends State<ProductsPage> {
   Future<void> _confirmAndDelete(Products product) async {
     final confirm = await showDialog<bool>(
       context: context,
-      barrierDismissible: false, // no se cierra tocando afuera del diálogo
+      barrierDismissible: false,
       builder: (context) => PopScope(
-        canPop: false, // bloquea Escape / botón de retroceso: obliga a elegir Sí o No
+        canPop: false,
         child: AlertDialog(
           title: const Text('Eliminar producto'),
           content: Text(
@@ -72,11 +72,58 @@ class _ProductsPageState extends State<ProductsPage> {
       _reload();
     } on ApiException catch (e) {
       _showMessage(e.message, isError: true);
-      // Si ya no existe (lo borró otro usuario), igual refrescamos la lista.
       _reload();
     } catch (e) {
       _showMessage('Ocurrió un error inesperado: $e', isError: true);
     }
+  }
+
+  /// Construye el contenido del área de error del FutureBuilder.
+  /// - Si el problema fue no poder contactar al servidor
+  ///   (ServerUnavailableException), muestra una pantalla dedicada con
+  ///   ícono y mensaje claro de "servidor no disponible".
+  /// - Para cualquier otro error, muestra el mensaje tal cual (ya viene
+  ///   traducido a algo legible desde ProductsService).
+  Widget _buildError(Object? error) {
+    final isServerDown = error is ServerUnavailableException;
+
+    final message = error is ApiException
+        ? error.message
+        : 'Ocurrió un error inesperado: $error';
+
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              isServerDown ? Icons.cloud_off : Icons.error_outline,
+              size: 64,
+              color: Colors.grey,
+            ),
+            const SizedBox(height: 16),
+            Text(
+              isServerDown ? 'Servidor no disponible' : 'Ocurrió un error',
+              style: Theme.of(context).textTheme.titleLarge,
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 8),
+            Text(
+              message,
+              textAlign: TextAlign.center,
+              style: TextStyle(color: Colors.grey[700]),
+            ),
+            const SizedBox(height: 20),
+            ElevatedButton.icon(
+              onPressed: _reload,
+              icon: const Icon(Icons.refresh),
+              label: const Text('Reintentar'),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   @override
@@ -109,22 +156,7 @@ class _ProductsPageState extends State<ProductsPage> {
             return const Center(child: CircularProgressIndicator());
           }
           if (snapshot.hasError) {
-            return Center(
-              child: Padding(
-                padding: const EdgeInsets.all(16),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text('Error al cargar productos: ${snapshot.error}'),
-                    const SizedBox(height: 12),
-                    ElevatedButton(
-                      onPressed: _reload,
-                      child: const Text('Reintentar'),
-                    ),
-                  ],
-                ),
-              ),
-            );
+            return _buildError(snapshot.error);
           }
 
           final products = snapshot.data ?? [];
