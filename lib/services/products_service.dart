@@ -40,7 +40,7 @@ class ProductsService {
   // - El estudiante que ejecuta la app Flutter (cliente) debe reemplazar
   //   'localhost' por esa IP del servidor. 'localhost' solo funciona si el
   //   backend corre en la MISMA máquina que la app.
-  final String url = "http://localhost:5050/api/Products";
+    final String url = "http://localhost:5050/api/Products";
 
   // Tiempo máximo de espera antes de asumir que el servidor no responde.
   static const _timeout = Duration(seconds: 8);
@@ -56,7 +56,7 @@ class ProductsService {
     } on TimeoutException {
       throw ServerUnavailableException(
         'El servidor tardó demasiado en responder. '
-        'Verifique que esté encendido y que la dirección sea correcta.',
+        'Por favor, inténtelo de nuevo más tarde.',
       );
     } on SocketException {
       throw ServerUnavailableException();

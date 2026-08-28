@@ -95,31 +95,36 @@ class _CapitalizeWordsFormatter extends TextInputFormatter {
 /// Se consume el evento (KeyEventResult.handled) para que no dispare
 /// su acción por defecto (Tab ya no cambia el foco de campo, por ejemplo).
 ///
-/// NOTA: esto bloquea lo que Flutter es capaz de interceptar a nivel de
-/// aplicación mientras el campo tiene el foco. La tecla Windows/Meta y
-/// combinaciones como Alt+Tab son capturadas por el sistema operativo
-/// ANTES de llegar a cualquier app (web o de escritorio), así que ningún
-/// software de aplicación puede impedir su acción a ese nivel.
-final Set<LogicalKeyboardKey> _blockedKeys = {
-  LogicalKeyboardKey.tab,
-  LogicalKeyboardKey.capsLock,
-  LogicalKeyboardKey.shift,
-  LogicalKeyboardKey.shiftLeft,
-  LogicalKeyboardKey.shiftRight,
-  LogicalKeyboardKey.control,
-  LogicalKeyboardKey.controlLeft,
-  LogicalKeyboardKey.controlRight,
-  LogicalKeyboardKey.alt,
-  LogicalKeyboardKey.altLeft,
-  LogicalKeyboardKey.altRight,
-  LogicalKeyboardKey.meta,
-  LogicalKeyboardKey.metaLeft,
-  LogicalKeyboardKey.metaRight,
-  LogicalKeyboardKey.fn,
-};
+/// [extraChars] permite que un campo específico habilite caracteres
+/// adicionales (por ejemplo, la coma decimal en el campo de precio) sin
+/// afectar a los demás campos del formulario.
+bool _isAllowedKey(LogicalKeyboardKey key, {String extraChars = ''}) {
+  if (key == LogicalKeyboardKey.space ||
+      key == LogicalKeyboardKey.backspace ||
+      key == LogicalKeyboardKey.delete) {
+    return true;
+  }
 
-KeyEventResult _blockRestrictedKeys(FocusNode node, KeyEvent event) {
-  if (_blockedKeys.contains(event.logicalKey)) {
+  final label = key.keyLabel;
+  // keyLabel de letras/dígitos es un solo carácter alfanumérico
+  // ("A", "5", etc). Cualquier otra tecla especial tiene un keyLabel
+  // distinto (más largo o vacío), así que queda bloqueada.
+  if (label.length != 1) return false;
+
+  if (extraChars.contains(label)) return true;
+
+  final code = label.codeUnitAt(0);
+  final isLetter = (code >= 65 && code <= 90) || (code >= 97 && code <= 122);
+  final isDigit = code >= 48 && code <= 57;
+  return isLetter || isDigit;
+}
+
+KeyEventResult _blockRestrictedKeys(
+  FocusNode node,
+  KeyEvent event, {
+  String extraChars = '',
+}) {
+  if (!_isAllowedKey(event.logicalKey, extraChars: extraChars)) {
     return KeyEventResult.handled;
   }
   return KeyEventResult.ignored;
@@ -148,7 +153,7 @@ class _ProductFormPageState extends State<ProductFormPage> {
   late int _currentVersion;
 
   // Solo letras (con tildes/ñ) y espacios. Sin números ni caracteres especiales.
-  static final RegExp _nameAllowed = RegExp(r'^[a-zA-ZÀ-ÿ ]+$');
+  static final RegExp _nameAllowed = RegExp(r'^[a-zA-Z0-9À-ÿ ]+$');
 
   @override
   void initState() {
@@ -220,7 +225,7 @@ class _ProductFormPageState extends State<ProductFormPage> {
       return 'El nombre no puede superar los 55 caracteres.';
     }
     if (!_nameAllowed.hasMatch(value.trim())) {
-      return 'Solo se permiten letras y espacios (sin números ni caracteres especiales).';
+      return 'Solo se permiten letras, números y espacios (sin caracteres especiales).';
     }
     return null;
   }
@@ -388,7 +393,7 @@ class _ProductFormPageState extends State<ProductFormPage> {
                     decoration: const InputDecoration(
                       labelText: 'Nombre del producto',
                       border: OutlineInputBorder(),
-                      helperText: 'Solo letras y espacios (máx. 55)',
+                      helperText: 'Solo letras, números y espacios (máx. 55)',
                     ),
                     maxLength: 55,
                     maxLengthEnforcement: MaxLengthEnforcement.enforced,
@@ -396,7 +401,7 @@ class _ProductFormPageState extends State<ProductFormPage> {
                     // incluso si viene de pegar texto. Los números quedan excluidos.
                     inputFormatters: [
                       FilteringTextInputFormatter.allow(
-                        RegExp(r'[a-zA-ZÀ-ÿ ]'),
+                        RegExp(r'[a-zA-Z0-9À-ÿ ]'),
                       ),
                       _CapitalizeWordsFormatter(),
                     ],
@@ -405,7 +410,10 @@ class _ProductFormPageState extends State<ProductFormPage> {
                 ),
                 const SizedBox(height: 15),
                 Focus(
-                  onKeyEvent: _blockRestrictedKeys,
+                  // Este campo habilita la coma como carácter extra, ya que
+                  // es el separador decimal del precio.
+                  onKeyEvent: (node, event) =>
+                      _blockRestrictedKeys(node, event, extraChars: ','),
                   child: TextFormField(
                     controller: priceController,
                     decoration: const InputDecoration(
