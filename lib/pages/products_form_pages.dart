@@ -1,5 +1,9 @@
+import 'dart:async';
+
 import 'package:app_01/models/products.dart';
 import 'package:app_01/services/products_service.dart';
+import 'package:cached_network_image/cached_network_image.dart';
+import 'package:cached_network_image_platform_interface/cached_network_image_platform_interface.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -11,9 +15,7 @@ class ProductFormPage extends StatefulWidget {
   State<ProductFormPage> createState() => _ProductFormPageState();
 }
 
-/// Formateador de precio: solo dígitos y UNA coma decimal.
-/// Máximo 4 dígitos enteros + 2 decimales (6 dígitos en total).
-/// Una vez alcanzado el límite, bloquea físicamente que se siga escribiendo.
+
 class _PriceInputFormatter extends TextInputFormatter {
   @override
   TextEditingValue formatEditUpdate(
@@ -90,10 +92,6 @@ class _CapitalizeWordsFormatter extends TextInputFormatter {
   }
 }
 
-/// Teclas que se bloquean dentro de los campos del formulario:
-/// Tab, Caps Lock, Shift, Ctrl, Fn, Windows/Meta y Alt.
-/// Se consume el evento (KeyEventResult.handled) para que no dispare
-/// su acción por defecto (Tab ya no cambia el foco de campo, por ejemplo).
 ///
 /// [extraChars] permite que un campo específico habilite caracteres
 /// adicionales (por ejemplo, la coma decimal en el campo de precio) sin
@@ -106,9 +104,7 @@ bool _isAllowedKey(LogicalKeyboardKey key, {String extraChars = ''}) {
   }
 
   final label = key.keyLabel;
-  // keyLabel de letras/dígitos es un solo carácter alfanumérico
-  // ("A", "5", etc). Cualquier otra tecla especial tiene un keyLabel
-  // distinto (más largo o vacío), así que queda bloqueada.
+
   if (label.length != 1) return false;
 
   if (extraChars.contains(label)) return true;
@@ -136,20 +132,28 @@ class _ProductFormPageState extends State<ProductFormPage> {
   final namesController = TextEditingController();
   final priceController = TextEditingController();
   final stockController = TextEditingController();
+  final descriptionController = TextEditingController();
+  final imageController = TextEditingController();
 
   final ProductsService productsService = ProductsService();
 
   bool _isSaving = false;
+  bool _active = true;
+
+  // Controla cuándo se muestra la previsualización de la imagen: solo
+  // cuando la URL actual es válida, para no intentar cargar cada tecleo.
+  String? _previewUrl;
+
+  // Espera a que el usuario deje de escribir antes de intentar cargar la
+  // preview: sin este debounce, cada tecla que hace que el texto parcial
+  // "parezca" una URL válida (ej: "http://i") dispara una petición de red
+  // nueva, y escribiendo rápido se acumulan muchas a la vez y congelan la UI.
+  Timer? _imageDebounce;
 
   // Se marca en true en cuanto el usuario modifica algún campo, para poder
   // preguntar antes de salir sin guardar.
   bool _dirty = false;
 
-  // Versión "viva" del producto que se está editando. Empieza con la del
-  // widget, pero se actualiza cuando se resuelve un conflicto cargando los
-  // datos actuales del servidor: de lo contrario, tras un conflicto la
-  // siguiente actualización siempre volvería a chocar (quedaría comparando
-  // contra una versión vieja para siempre).
   late int _currentVersion;
 
   // Solo letras (con tildes/ñ) y espacios. Sin números ni caracteres especiales.
@@ -165,10 +169,31 @@ class _ProductFormPageState extends State<ProductFormPage> {
           .toStringAsFixed(2)
           .replaceAll('.', ',');
       stockController.text = widget.product!.stock.toString();
+      descriptionController.text = widget.product!.description ?? '';
+      imageController.text = widget.product!.image ?? '';
+      _active = widget.product!.active;
+      _previewUrl = _validateImage(imageController.text) == null
+          ? imageController.text.trim()
+          : null;
     }
     namesController.addListener(_markDirty);
     priceController.addListener(_markDirty);
     stockController.addListener(_markDirty);
+    descriptionController.addListener(_markDirty);
+    imageController.addListener(_onImageChanged);
+  }
+
+  void _onImageChanged() {
+    _markDirty();
+    _imageDebounce?.cancel();
+    _imageDebounce = Timer(const Duration(milliseconds: 500), () {
+      if (!mounted) return;
+      final isValid = _validateImage(imageController.text) == null;
+      final url = isValid ? imageController.text.trim() : null;
+      if (url != _previewUrl) {
+        setState(() => _previewUrl = url);
+      }
+    });
   }
 
   void _markDirty() {
@@ -177,15 +202,15 @@ class _ProductFormPageState extends State<ProductFormPage> {
 
   @override
   void dispose() {
+    _imageDebounce?.cancel();
     namesController.dispose();
     priceController.dispose();
     stockController.dispose();
+    descriptionController.dispose();
+    imageController.dispose();
     super.dispose();
   }
 
-  /// Pregunta al usuario si desea dejar de editar cuando hay cambios sin
-  /// guardar y presiona "atrás" (gesto, botón del sistema o flecha del
-  /// AppBar). Devuelve true si debe salir de la pantalla.
   Future<bool> _confirmDiscardIfDirty() async {
     if (!_dirty) return true;
 
@@ -266,6 +291,35 @@ class _ProductFormPageState extends State<ProductFormPage> {
     return null;
   }
 
+  String? _validateDescription(String? value) {
+    if (value == null || value.trim().isEmpty) {
+      // Es opcional.
+      return null;
+    }
+    if (value.trim().length > 500) {
+      return 'La descripción no puede superar los 500 caracteres.';
+    }
+    return null;
+  }
+
+  String? _validateImage(String? value) {
+    if (value == null || value.trim().isEmpty) {
+      // Es opcional.
+      return null;
+    }
+    final trimmed = value.trim();
+    if (trimmed.length > 500) {
+      return 'La URL no puede superar los 500 caracteres.';
+    }
+    final uri = Uri.tryParse(trimmed);
+    if (uri == null ||
+        !uri.isAbsolute ||
+        (uri.scheme != 'http' && uri.scheme != 'https')) {
+      return 'Ingrese una URL válida (debe iniciar con http:// o https://).';
+    }
+    return null;
+  }
+
   void _showMessage(String message, {bool isError = false}) {
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
@@ -310,6 +364,12 @@ class _ProductFormPageState extends State<ProductFormPage> {
             .toStringAsFixed(2)
             .replaceAll('.', ',');
         stockController.text = e.current!.stock.toString();
+        descriptionController.text = e.current!.description ?? '';
+        imageController.text = e.current!.image ?? '';
+        _active = e.current!.active;
+        _previewUrl = _validateImage(imageController.text) == null
+            ? imageController.text.trim()
+            : null;
         // Clave del fix: se toma la versión ACTUAL del servidor, si no la
         // próxima actualización seguiría comparando contra la versión vieja
         // y volvería a chocar aunque los datos ya estén al día.
@@ -328,11 +388,17 @@ class _ProductFormPageState extends State<ProductFormPage> {
 
     setState(() => _isSaving = true);
 
+    final description = descriptionController.text.trim();
+    final image = imageController.text.trim();
+
     final product = Products(
       id: widget.product?.id ?? '0',
       names: namesController.text.trim(),
       price: double.parse(priceController.text.trim().replaceAll(',', '.')),
       stock: int.parse(stockController.text.trim()),
+      description: description.isEmpty ? null : description,
+      image: image.isEmpty ? null : image,
+      active: _active,
       version: _currentVersion,
     );
 
@@ -380,7 +446,7 @@ class _ProductFormPageState extends State<ProductFormPage> {
         appBar: AppBar(
           title: Text(isEditing ? 'Editar Producto' : 'Agregar Producto'),
         ),
-        body: Padding(
+        body: SingleChildScrollView(
           padding: const EdgeInsets.all(20),
           child: Form(
             key: _formKey,
@@ -445,6 +511,73 @@ class _ProductFormPageState extends State<ProductFormPage> {
                     inputFormatters: [FilteringTextInputFormatter.digitsOnly],
                     validator: _validateStock,
                   ),
+                ),
+                const SizedBox(height: 15),
+                TextFormField(
+                  controller: descriptionController,
+                  decoration: const InputDecoration(
+                    labelText: 'Descripción (opcional)',
+                    border: OutlineInputBorder(),
+                    helperText: 'Máx. 500 caracteres',
+                  ),
+                  maxLength: 500,
+                  maxLengthEnforcement: MaxLengthEnforcement.enforced,
+                  maxLines: 3,
+                  validator: _validateDescription,
+                ),
+                const SizedBox(height: 15),
+                TextFormField(
+                  controller: imageController,
+                  decoration: const InputDecoration(
+                    labelText: 'URL de la imagen (opcional)',
+                    border: OutlineInputBorder(),
+                    helperText: 'Debe iniciar con http:// o https://',
+                  ),
+                  maxLength: 500,
+                  maxLengthEnforcement: MaxLengthEnforcement.enforced,
+                  keyboardType: TextInputType.url,
+                  validator: _validateImage,
+                ),
+                if (_previewUrl != null) ...[
+                  const SizedBox(height: 10),
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(8),
+                    child: CachedNetworkImage(
+                      key: ValueKey(_previewUrl),
+                      imageUrl: _previewUrl!,
+                      height: 120,
+                      fit: BoxFit.cover,
+                      fadeInDuration: Duration.zero,
+                      fadeOutDuration: Duration.zero,
+                      imageRenderMethodForWeb:
+                          ImageRenderMethodForWeb.HttpGet,
+                      placeholder: (context, url) => const SizedBox(
+                        height: 120,
+                        child: Center(
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        ),
+                      ),
+                      errorWidget: (context, url, error) => const SizedBox(
+                        height: 120,
+                        child: Center(
+                          child: Icon(Icons.broken_image, color: Colors.grey),
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+                const SizedBox(height: 10),
+                SwitchListTile(
+                  contentPadding: EdgeInsets.zero,
+                  title: const Text('Producto activo'),
+                  subtitle: Text(_active ? 'Activo' : 'Inactivo'),
+                  value: _active,
+                  onChanged: (value) {
+                    setState(() {
+                      _active = value;
+                      _dirty = true;
+                    });
+                  },
                 ),
                 const SizedBox(height: 25),
                 ElevatedButton(

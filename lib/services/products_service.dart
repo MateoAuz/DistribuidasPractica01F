@@ -14,10 +14,7 @@ class ApiException implements Exception {
   String toString() => message;
 }
 
-/// Excepción específica para cuando NO se pudo ni siquiera contactar al
-/// servidor (apagado, IP/puerto incorrectos, sin red, timeout, etc.).
-/// Se separa de ApiException para poder mostrar una pantalla distinta
-/// ("servidor no disponible") en vez de un mensaje de error genérico.
+
 class ServerUnavailableException extends ApiException {
   ServerUnavailableException([
     super.message = 'No se pudo conectar con el servidor. '
@@ -33,13 +30,7 @@ class ConflictException extends ApiException {
 }
 
 class ProductsService {
-  // IMPORTANTE (trabajo en parejas):
-  // - El estudiante que ejecuta el backend (servidor) debe correrlo
-  //   escuchando en 0.0.0.0 (ver launchSettings.json) y compartir su IP
-  //   dentro de la red local, por ejemplo: 192.168.1.25
-  // - El estudiante que ejecuta la app Flutter (cliente) debe reemplazar
-  //   'localhost' por esa IP del servidor. 'localhost' solo funciona si el
-  //   backend corre en la MISMA máquina que la app.
+
     final String url = "http://localhost:5050/api/Products";
 
   // Tiempo máximo de espera antes de asumir que el servidor no responde.
@@ -48,8 +39,7 @@ class ProductsService {
   /// Ejecuta [request] y traduce los errores de bajo nivel (sin conexión,
   /// servidor apagado, timeout, IP/puerto incorrectos, etc.) en una
   /// [ServerUnavailableException] con un mensaje amigable para el usuario.
-  /// Los errores propios de la API (400, 404, 409...) siguen viajando tal
-  /// cual, ya que esos SÍ vienen de un servidor que respondió.
+
   Future<T> _guard<T>(Future<T> Function() request) async {
     try {
       return await request().timeout(_timeout);

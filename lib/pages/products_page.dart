@@ -1,7 +1,12 @@
 import 'package:app_01/models/products.dart';
 import 'package:app_01/pages/products_form_pages.dart';
 import 'package:app_01/services/products_service.dart';
+import 'package:cached_network_image/cached_network_image.dart';
+import 'package:cached_network_image_platform_interface/cached_network_image_platform_interface.dart';
 import 'package:flutter/material.dart';
+
+/// Filtro de estado para la lista de productos.
+enum _StatusFilter { all, active, inactive }
 
 class ProductsPage extends StatefulWidget {
   const ProductsPage({super.key});
@@ -15,10 +20,23 @@ class _ProductsPageState extends State<ProductsPage> {
 
   late Future<List<Products>> futureProducts;
 
+  _StatusFilter _statusFilter = _StatusFilter.all;
+
   @override
   void initState() {
     super.initState();
     _reload();
+  }
+
+  List<Products> _applyFilter(List<Products> products) {
+    switch (_statusFilter) {
+      case _StatusFilter.active:
+        return products.where((p) => p.active).toList();
+      case _StatusFilter.inactive:
+        return products.where((p) => !p.active).toList();
+      case _StatusFilter.all:
+        return products;
+    }
   }
 
   void _reload() {
@@ -132,6 +150,26 @@ class _ProductsPageState extends State<ProductsPage> {
       appBar: AppBar(
         title: const Text('Products MAuz'),
         actions: [
+          PopupMenuButton<_StatusFilter>(
+            icon: const Icon(Icons.filter_list),
+            tooltip: 'Filtrar',
+            initialValue: _statusFilter,
+            onSelected: (value) => setState(() => _statusFilter = value),
+            itemBuilder: (context) => const [
+              PopupMenuItem(
+                value: _StatusFilter.all,
+                child: Text('Todos'),
+              ),
+              PopupMenuItem(
+                value: _StatusFilter.active,
+                child: Text('Activos'),
+              ),
+              PopupMenuItem(
+                value: _StatusFilter.inactive,
+                child: Text('Inactivos'),
+              ),
+            ],
+          ),
           IconButton(
             icon: const Icon(Icons.refresh),
             onPressed: _reload,
@@ -159,10 +197,17 @@ class _ProductsPageState extends State<ProductsPage> {
             return _buildError(snapshot.error);
           }
 
-          final products = snapshot.data ?? [];
+          final allProducts = snapshot.data ?? [];
+          final products = _applyFilter(allProducts);
+
+          if (allProducts.isEmpty) {
+            return const Center(child: Text('No hay productos registrados.'));
+          }
 
           if (products.isEmpty) {
-            return const Center(child: Text('No hay productos registrados.'));
+            return const Center(
+              child: Text('No hay productos que coincidan con el filtro.'),
+            );
           }
 
           return ListView.builder(
@@ -170,8 +215,48 @@ class _ProductsPageState extends State<ProductsPage> {
             itemBuilder: (context, index) {
               final product = products[index];
               return Card(
+                key: ValueKey(product.id),
                 margin: const EdgeInsets.all(8.0),
                 child: ListTile(
+                  leading: SizedBox(
+                    width: 48,
+                    height: 48,
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(6),
+                      child: (product.image == null || product.image!.isEmpty)
+                          ? Container(
+                              color: Colors.grey[300],
+                              child: const Icon(
+                                Icons.inventory_2_outlined,
+                                color: Colors.grey,
+                              ),
+                            )
+                          : CachedNetworkImage(
+                              key: ValueKey(product.image),
+                              imageUrl: product.image!,
+                              fit: BoxFit.cover,
+                              fadeInDuration: Duration.zero,
+                              fadeOutDuration: Duration.zero,
+                              // En Flutter Web, el modo por defecto (HtmlImage)
+                              // dibuja la textura a partir de un <img>/Blob que
+                              // puede quedar liberado al reconstruirse el widget
+                              // (reload), pintando la imagen en negro
+                              // (WebGL texImage2D: no image). HttpGet decodifica
+                              // los bytes directamente con Skia y evita ese bug.
+                              imageRenderMethodForWeb:
+                                  ImageRenderMethodForWeb.HttpGet,
+                              placeholder: (context, url) => const Center(
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                ),
+                              ),
+                              errorWidget: (context, url, error) => const Icon(
+                                Icons.broken_image,
+                                color: Colors.grey,
+                              ),
+                            ),
+                    ),
+                  ),
                   title: Text(product.names),
                   subtitle: Text(
                     'Precio: \$${product.price.toStringAsFixed(2)}\nStock: ${product.stock}',
@@ -180,6 +265,13 @@ class _ProductsPageState extends State<ProductsPage> {
                   trailing: Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
+                      Icon(
+                        product.active
+                            ? Icons.check_circle
+                            : Icons.cancel,
+                        color: product.active ? Colors.green : Colors.red,
+                        size: 20,
+                      ),
                       IconButton(
                         icon: const Icon(Icons.edit),
                         onPressed: () async {
